@@ -1,0 +1,63 @@
+name: Release
+
+# Pushing a tag `vX.Y.Z` builds the NSIS installer and attaches it, with its checksum,
+# to a DRAFT GitHub release. Review the draft and publish it by hand (SPEC-0600-0001).
+on:
+  push:
+    tags: [ "v*.*.*" ]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Frontend Dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Check that the tag matches the app version
+        working-directory: app
+        shell: bash
+        run: |
+          npm run release:check
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match version $version"; exit 1
+          fi
+
+      - name: Tests
+        working-directory: app
+        run: |
+          npm test
+          cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build installer
+        working-directory: app
+        run: npm run release:build
+
+      - name: Create draft release
+        working-directory: app/src-tauri/target/release/bundle/nsis
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --draft --title "bookf ${GITHUB_REF_NAME#v}" \
+            --notes "変更点は [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/CHANGELOG.md) を参照してください。" \
+            ./*-setup.exe ./*-setup.exe.sha256

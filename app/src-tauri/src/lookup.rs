@@ -1,4 +1,4 @@
-//! Book metadata lookup (SPEC-0100 §4):
+//! Book metadata lookup (SPEC-0300-0003):
 //! 1. Link URL: a general web page is read once for its OGP / meta tags. Amazon and Audible pages
 //!    are never fetched; only the ASIN / ISBN and title slug written in the URL itself are used.
 //! 2. CiNii Books API (National Institute of Informatics - Japanese library catalog)

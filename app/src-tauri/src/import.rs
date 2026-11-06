@@ -1,4 +1,4 @@
-//! Import of the CSV exported from the Notion "Reading List" database (SPEC-0100 §3).
+//! Import of the CSV exported from the Notion "Reading List" database (SPEC-0300-0002).
 //!
 //! Columns: タイトル, ステータス, リンク, 種別, 著者, 評価, 読了日, 開始.
 //! 評価 is a run of ⭐️ characters, dates are written like `2024年6月16日`.

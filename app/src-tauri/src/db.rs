@@ -1,4 +1,4 @@
-//! SQLite storage of the reading log (SPEC-0100 §3).
+//! SQLite storage of the reading log (SPEC-0300-0002).
 //!
 //! The database file may live in a cloud-synced folder (Google Drive etc.), so the
 //! rollback journal (`DELETE`) is used instead of WAL: no `-wal` / `-shm` side files

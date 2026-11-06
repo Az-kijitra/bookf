@@ -1,4 +1,4 @@
-// Keyboard map of the main window (SPEC-0100 §2.3). `resolveKey` only decides what a key
+// Keyboard map of the main window (SPEC-0300-0001 §3). `resolveKey` only decides what a key
 // press means; +page.svelte carries the action out. Keeping this pure lets the whole
 // key table be tested without a DOM.
 

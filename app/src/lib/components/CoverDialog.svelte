@@ -27,7 +27,7 @@
         title: "表紙画像ファイルを選択",
         multiple: false,
         directory: false,
-        filters: [{ name: "画像ファイル", extensions: ["png", "jpg", "jpeg", "webp", "gif", "avif"] }],
+        filters: [{ name: "画像ファイル", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
       });
       if (!selected || typeof selected !== "string") return;
 
@@ -113,7 +113,7 @@
         <button class="action-btn" onclick={chooseLocalFile} disabled={busy}>
           📁 画像ファイルを選択…
         </button>
-        <div class="hint muted">（PNG, JPG, WebP, GIF など）</div>
+        <div class="hint muted">（PNG / JPG / WebP / GIF、10 MB まで）</div>
       </div>
 
       <div class="section">

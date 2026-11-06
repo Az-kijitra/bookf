@@ -13,9 +13,21 @@ GUI ファイラー [`guif`](https://github.com/Az-kijitra/guif) と同じ Nord 
 
 ## インストール
 
-現在はソースコードからのビルドで使えます（インストーラーは今後 [Releases](https://github.com/Az-kijitra/bookf/releases) で配布する予定です）。
+### 方法 1: インストーラーを実行（推奨）
 
-### 必要要件
+1. [Releases](https://github.com/Az-kijitra/bookf/releases) から最新のインストーラー `bookf_0.1.0_x64-setup.exe` をダウンロードして実行します。
+2. 画面の案内に従って進めます。インストール先は既定で `%LOCALAPPDATA%\bookf` です（現在のユーザーのみ、管理者権限不要）。
+3. スタートメニューの「bookf」から起動します。
+
+> **SmartScreen の警告が出たとき**
+> インストーラーにはコード署名がないため、「Windows によって PC が保護されました」という警告が出ることがあります。「詳細情報」を選び、表示される「実行」ボタンを押して進めてください。
+
+### 方法 2: ソースコードからビルドする
+
+<details>
+<summary>ビルド手順を表示</summary>
+
+#### 必要要件
 
 - Windows 10 または Windows 11 (64 ビット版)
 - Rust 1.80 以上 (`cargo`)
@@ -38,9 +50,12 @@ npm test                                          # フロントエンド (Vites
 npm run check                                     # 型チェック (svelte-check)
 cargo test --manifest-path src-tauri/Cargo.toml   # バックエンド (Rust)
 
-# インストーラーのビルド (app/src-tauri/target/release/bundle/nsis/ に出力)
-npm run tauri build
+# インストーラーとチェックサムのビルド (app/src-tauri/target/release/bundle/nsis/ に出力)
+npm run release:build
 ```
+
+リリースの手順は [SPEC-0600-0001](specs/release/SPEC-0600-0001-windows-installer.md) にあります。
+</details>
 
 ---
 
@@ -74,7 +89,7 @@ npm run tauri build
 | `s` / `r` | 並び替えの項目を切り替え / 昇順・降順を反転 |
 | `Delete` | 本を削除（確認あり） |
 
-全一覧は [仕様書 §2.3](specs/SPEC-0100-reading-tracker.md#23-キーボードショートカット) にあります。
+全一覧は [ユーザーマニュアル §6](docs/user_manual.md#6-キー割り当て) にあります。
 
 ---
 
@@ -97,7 +112,7 @@ npm run tauri build
 
 ### Notion から移行する
 
-Notion の読書リストを「CSV」で書き出し、「ファイル」→「Notion CSV 取り込み…」(`Ctrl+I`) で選びます。読み込む列は `タイトル`, `著者`, `ステータス`, `種別`, `評価`（⭐ の数）, `読了日`, `開始`（`2024年6月16日` 形式）, `リンク` です。
+Notion の読書リストを「CSV」で書き出し、「ファイル」→「Notion CSV 取り込み…」(`Ctrl+I`) で選びます。読み込む列は `タイトル`, `著者`, `ステータス`, `種別`, `評価`（⭐ の数）, `読了日`, `開始`（`2024年6月16日` 形式）, `リンク`, `ISBN`, `感想` / `メモ` です。詳しくは [ユーザーマニュアル §7.2](docs/user_manual.md#72-notion-から移行する) にあります。
 
 ---
 
@@ -128,7 +143,9 @@ Windows の「設定」→「アプリ」から「bookf」を選んでアンイ�
 
 ## ドキュメント
 
-- [基本設計仕様書 (SPEC-0100)](specs/SPEC-0100-reading-tracker.md): 画面構成・キー操作・データモデル・書誌情報の取得・同期の設計
+- [ユーザーマニュアル](docs/user_manual.md): すべての操作、全キー割り当て、同期フォルダーでの運用、バックアップからの復元、困ったとき
+- [仕様台帳](specs/_registry.md): 画面とキー操作・データモデル・書誌情報の取得・保存先と同期・テスト・配布の仕様一覧
+- [変更履歴](CHANGELOG.md): リリース履歴
 
 ---
 
