@@ -1,22 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-
-  export interface MenuItem {
-    id: string;
-    label: string;
-    shortcut?: string;
-    disabled?: boolean;
-    checked?: boolean;
-    type?: "separator";
-    action?: () => void;
-  }
-
-  export interface MenuGroup {
-    id: string;
-    name: string;
-    accessKey: string;
-    items: MenuItem[];
-  }
+  import type { MenuGroup, MenuItem } from "$lib/features/menu";
 
   let {
     menus,

@@ -1,29 +1,39 @@
 <script lang="ts">
   import "../app.css";
   import { onMount, tick } from "svelte";
-  import { open as openDialog, save as saveDialog, ask } from "@tauri-apps/plugin-dialog";
+  import { ask } from "@tauri-apps/plugin-dialog";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { api } from "$lib/api";
   import {
     applyCandidate,
+    bookFromLookup,
+    clampIndex,
+    cycleSort,
+    libraryStats,
     matchesFilter,
     matchesQuery,
-    sameFilter,
+    nextSort,
     sideItems,
     sortBooks,
+    stepFilter,
+    suggestQuery,
     SORT_LABELS,
     today,
     type Filter,
     type Sort,
     type SortKey,
   } from "$lib/library";
-  import { emptyBook, MEDIA_TYPES, STATUSES, type Book, type LibraryInfo, type LookupResult } from "$lib/types";
+  import { MEDIA_TYPES, STATUSES, type Book, type LibraryInfo, type LookupResult } from "$lib/types";
+  import { isTypingTarget, resolveKey, type Focus, type KeyAction } from "$lib/features/keymap";
+  import { buildMenus } from "$lib/features/menu";
+  import { pickDatabase, pickDatabaseTarget, pickNotionCsv } from "$lib/features/file-dialogs";
+  import BookList from "$lib/components/BookList.svelte";
+  import CoverDialog from "$lib/components/CoverDialog.svelte";
   import DetailPane from "$lib/components/DetailPane.svelte";
   import LookupDialog from "$lib/components/LookupDialog.svelte";
-  import CoverDialog from "$lib/components/CoverDialog.svelte";
-  import MenuBar, { type MenuGroup } from "$lib/components/MenuBar.svelte";
-
-  type Focus = "side" | "list" | "detail";
+  import MenuBar from "$lib/components/MenuBar.svelte";
+  import Sidebar from "$lib/components/Sidebar.svelte";
+  import StatusBar from "$lib/components/StatusBar.svelte";
 
   let books = $state<Book[]>([]);
   let info = $state<LibraryInfo | null>(null);
@@ -38,7 +48,7 @@
   let covers = $state<Record<string, string>>({});
 
   let searchEl = $state<HTMLInputElement>();
-  let listEl = $state<HTMLElement>();
+  let list = $state<ReturnType<typeof BookList>>();
   let detail = $state<ReturnType<typeof DetailPane>>();
 
   const mediaTypes = $derived([...new Set([...MEDIA_TYPES, ...books.map((b) => b.media_type)])]);
@@ -46,11 +56,7 @@
   const filtered = $derived(sortBooks(books.filter((b) => matchesFilter(b, filter) && matchesQuery(b, query)), sort));
   const cursor = $derived(Math.max(0, filtered.findIndex((b) => b.id === selectedId)));
   const selected = $derived<Book | null>(filtered[cursor] ?? null);
-  const readCount = $derived(books.filter((b) => b.status === "読了").length);
-  const avgRating = $derived.by(() => {
-    const r = books.filter((b) => b.rating > 0);
-    return r.length ? (r.reduce((s, b) => s + b.rating, 0) / r.length).toFixed(1) : "-";
-  });
+  const stats = $derived(libraryStats(books));
   const coverSrc = $derived.by(() => {
     if (!selected) return null;
     if (selected.cover_local_path && covers[selected.cover_local_path]) return covers[selected.cover_local_path];
@@ -59,8 +65,7 @@
 
   function flash(msg: string) {
     message = msg;
-    const m = msg;
-    setTimeout(() => message === m && (message = ""), 6000);
+    setTimeout(() => message === msg && (message = ""), 6000);
   }
 
   async function reload() {
@@ -79,10 +84,17 @@
   // Load the cached cover of the selected book (data: URL from the back end).
   $effect(() => {
     const rel = selected?.cover_local_path;
-    if (rel && !(rel in covers)) {
-      api.coverData(rel).then((d) => d && (covers[rel] = d)).catch(() => {});
-    }
+    if (rel && !(rel in covers)) loadCover(rel);
   });
+
+  async function loadCover(rel: string) {
+    try {
+      const d = await api.coverData(rel);
+      if (d) covers[rel] = d;
+    } catch {
+      // The remote cover_url is shown instead.
+    }
+  }
 
   function replaceBook(b: Book) {
     const i = books.findIndex((x) => x.id === b.id);
@@ -112,23 +124,14 @@
 
   async function onCoverUpdated(updated: Book) {
     replaceBook(updated);
-    if (updated.cover_local_path) {
-      try {
-        const data = await api.coverData(updated.cover_local_path);
-        if (data) covers[updated.cover_local_path] = data;
-      } catch {
-        // ignore
-      }
-    }
+    if (updated.cover_local_path) await loadCover(updated.cover_local_path);
     flash(`「${updated.title}」の表紙イメージを更新しました。`);
   }
 
   async function select(i: number) {
     if (filtered.length === 0) return;
-    const n = Math.max(0, Math.min(filtered.length - 1, i));
-    selectedId = filtered[n].id;
-    await tick();
-    listEl?.querySelector(".row.cur")?.scrollIntoView({ block: "nearest" });
+    selectedId = filtered[clampIndex(i, filtered.length)].id;
+    await list?.scrollToCursor();
   }
 
   function setFilter(f: Filter) {
@@ -136,28 +139,22 @@
     tick().then(() => select(0));
   }
 
-  function setSort(key: SortKey) {
-    sort = sort.key === key ? { key, desc: !sort.desc } : { key, desc: key === "completed_at" || key === "rating" };
+  function clearFilter() {
+    filter = { kind: "all" };
+    query = "";
   }
 
-  function cycleSort() {
-    const keys = Object.keys(SORT_LABELS) as SortKey[];
-    setSort(keys[(keys.indexOf(sort.key) + 1) % keys.length]);
-  }
+  const setSort = (key: SortKey) => (sort = nextSort(sort, key));
+  const openLookup = () => selected && (dialog = { mode: "update", book: selected });
 
   async function onLookup(r: LookupResult) {
     const d = dialog;
     dialog = null;
     if (!d) return;
     if (d.mode === "add") {
-      let b: Book = { ...emptyBook(), title: r.title, status: r.status, media_type: r.media_type };
-      if (r.status === "読了") b.completed_at = today();
-      if (r.status === "読書中") b.started_at = today();
-      if (r.candidate) b = applyCandidate(b, r.candidate);
-      const saved = await saveBook(b);
+      const saved = await saveBook(bookFromLookup(r, today()));
       if (saved) {
-        filter = { kind: "all" };
-        query = "";
+        clearFilter();
         await tick();
         selectedId = saved.id;
         await select(cursor);
@@ -176,12 +173,13 @@
 
   async function removeSelected() {
     if (!selected) return;
-    const ok = await ask(`「${selected.title}」を削除しますか？`, { title: "bookf", kind: "warning", okLabel: "削除", cancelLabel: "キャンセル" });
+    const target = selected;
+    const ok = await ask(`「${target.title}」を削除しますか？`, { title: "bookf", kind: "warning", okLabel: "削除", cancelLabel: "キャンセル" });
     if (!ok) return;
     const i = cursor;
     try {
-      await api.deleteBook(selected.id!);
-      books = books.filter((b) => b.id !== selected!.id);
+      await api.deleteBook(target.id!);
+      books = books.filter((b) => b.id !== target.id);
       await tick();
       select(i);
     } catch (e) {
@@ -194,8 +192,8 @@
   }
 
   async function importCsv() {
-    const path = await openDialog({ title: "Notion からエクスポートした CSV", filters: [{ name: "CSV", extensions: ["csv"] }] });
-    if (typeof path !== "string") return;
+    const path = await pickNotionCsv();
+    if (!path) return;
     try {
       const r = await api.importNotionCsv(path);
       await reload();
@@ -205,298 +203,92 @@
     }
   }
 
-  async function moveDb() {
-    const path = await saveDialog({
-      title: "データベースの保存先（例: Google ドライブのフォルダー）",
-      defaultPath: "books.db",
-      filters: [{ name: "bookf データベース", extensions: ["db"] }],
-    });
+  /** 保存先を移動 (`copy`: the current library is copied there first) or データベースを開く. */
+  async function switchDb(copy: boolean) {
+    const path = await (copy ? pickDatabaseTarget() : pickDatabase());
     if (!path) return;
     try {
-      info = await api.setDbPath(path, true);
+      info = await api.setDbPath(path, copy);
       covers = {};
       await reload();
-      flash(`保存先を ${info.db_path} に変更しました。`);
+      if (!copy) select(0);
+      flash(copy ? `保存先を ${info.db_path} に変更しました。` : `${info.db_path} を開きました。`);
     } catch (e) {
-      flash(`保存先を変更できません: ${e}`);
+      flash(copy ? `保存先を変更できません: ${e}` : `開けません: ${e}`);
     }
   }
+  const moveDb = () => switchDb(true);
+  const openDb = () => switchDb(false);
 
-  async function openDb() {
-    const path = await openDialog({ title: "データベースを開く", filters: [{ name: "bookf データベース", extensions: ["db"] }] });
-    if (typeof path !== "string") return;
-    try {
-      info = await api.setDbPath(path, false);
-      covers = {};
-      await reload();
-      select(0);
-      flash(`${info.db_path} を開きました。`);
-    } catch (e) {
-      flash(`開けません: ${e}`);
+  function run(a: KeyAction) {
+    switch (a.type) {
+      case "addBook": return void (dialog = { mode: "add" });
+      case "importCsv": return void importCsv();
+      case "openDb": return void openDb();
+      case "focusSearch": return searchEl?.focus();
+      case "leaveInput":
+        (document.activeElement as HTMLElement | null)?.blur();
+        focus = "list";
+        return;
+      case "searchToList":
+        searchEl?.blur();
+        focus = "list";
+        return void select(0);
+      case "toggleFocus": return void (focus = focus === "side" ? "list" : "side");
+      case "sideMove": return setFilter(stepFilter(side, filter, a.delta));
+      case "sideToList": return void (focus = "list");
     }
-  }
-
-  function selectableSide() {
-    return side.map((s, i) => ({ s, i })).filter(({ s }) => !s.heading);
-  }
-
-  function moveSide(d: number) {
-    const items = selectableSide();
-    const at = Math.max(0, items.findIndex(({ s }) => sameFilter(s.filter, filter)));
-    const next = items[Math.max(0, Math.min(items.length - 1, at + d))];
-    setFilter(next.s.filter);
-  }
-
-  function isTyping(t: EventTarget | null) {
-    const el = t as HTMLElement | null;
-    return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable);
+    focus = "list";
+    switch (a.type) {
+      case "move": return void select(cursor + a.delta);
+      case "page": return void select(cursor + a.delta * (list?.pageSize() ?? 20));
+      case "first": return void select(0);
+      case "last": return void select(filtered.length - 1);
+      case "toSide": return void (focus = "side");
+      case "rate": return void setRating(a.value);
+      case "editNotes": return detail?.focusNotes();
+      case "openLink": return void openLink();
+      case "lookup": return void openLookup();
+      case "cycleSort": return void (sort = cycleSort(sort));
+      case "reverseSort": return void (sort = { ...sort, desc: !sort.desc });
+      case "deleteBook": return void removeSelected();
+    }
   }
 
   function onkeydown(e: KeyboardEvent) {
-    if (dialog || e.isComposing) return;
-    const ctrl = e.ctrlKey || e.metaKey;
-    if (ctrl && e.key.toLowerCase() === "n") return e.preventDefault(), (dialog = { mode: "add" });
-    if (ctrl && e.key.toLowerCase() === "i") return e.preventDefault(), importCsv();
-    if (ctrl && e.key.toLowerCase() === "o") return e.preventDefault(), openDb();
-    if (ctrl && e.key.toLowerCase() === "f") return e.preventDefault(), searchEl?.focus();
-
-    if (isTyping(e.target)) {
-      if (e.key === "Escape") {
-        (e.target as HTMLElement).blur();
-        focus = "list";
-      } else if (e.target === searchEl && (e.key === "Enter" || e.key === "ArrowDown")) {
-        e.preventDefault();
-        searchEl?.blur();
-        focus = "list";
-        select(0);
-      }
-      return;
-    }
-    if (ctrl) return;
-
-    if (e.key === "Tab") {
-      e.preventDefault();
-      focus = focus === "side" ? "list" : "side";
-      return;
-    }
-    if (e.key === "/") return e.preventDefault(), searchEl?.focus();
-
-    if (focus === "side") {
-      if (e.key === "j" || e.key === "ArrowDown") return e.preventDefault(), moveSide(1);
-      if (e.key === "k" || e.key === "ArrowUp") return e.preventDefault(), moveSide(-1);
-      if (e.key === "Enter" || e.key === "l" || e.key === "ArrowRight") return e.preventDefault(), (focus = "list");
-      return;
-    }
-
-    focus = "list";
-    const page = Math.max(1, Math.floor((listEl?.clientHeight ?? 400) / 20) - 1);
-    switch (e.key) {
-      case "j":
-      case "ArrowDown":
-        e.preventDefault();
-        select(cursor + 1);
-        break;
-      case "k":
-      case "ArrowUp":
-        e.preventDefault();
-        select(cursor - 1);
-        break;
-      case "PageDown":
-        e.preventDefault();
-        select(cursor + page);
-        break;
-      case "PageUp":
-        e.preventDefault();
-        select(cursor - page);
-        break;
-      case "Home":
-      case "g":
-        e.preventDefault();
-        select(0);
-        break;
-      case "End":
-      case "G":
-        e.preventDefault();
-        select(filtered.length - 1);
-        break;
-      case "h":
-      case "ArrowLeft":
-        e.preventDefault();
-        focus = "side";
-        break;
-      case "0":
-      case "1":
-      case "2":
-      case "3":
-      case "4":
-      case "5":
-        setRating(Number(e.key));
-        break;
-      case "e":
-        e.preventDefault();
-        detail?.focusNotes();
-        break;
-      case "o":
-      case "Enter":
-        openLink();
-        break;
-      case "u":
-        if (selected) dialog = { mode: "update", book: selected };
-        break;
-      case "s":
-        cycleSort();
-        break;
-      case "r":
-        sort = { ...sort, desc: !sort.desc };
-        break;
-      case "Delete":
-        removeSelected();
-        break;
-    }
+    const r = resolveKey({
+      key: e.key,
+      ctrl: e.ctrlKey || e.metaKey,
+      composing: e.isComposing,
+      dialogOpen: !!dialog || !!coverDialogBook,
+      typing: isTypingTarget(e.target),
+      inSearch: e.target === searchEl,
+      focus,
+    });
+    if (!r) return;
+    if (r.preventDefault) e.preventDefault();
+    run(r.action);
   }
 
-  function suggestQuery(b: Book): string {
-    if (b.isbn) return b.isbn;
-    if (b.title.startsWith("http://") || b.title.startsWith("https://")) return b.title;
-    return b.title.trim();
-  }
-
-  function stars(n: number) {
-    return "★".repeat(n) + "☆".repeat(5 - n);
-  }
-
-  function shortDate(d: string | null) {
-    return d ? d.replaceAll("-", "/") : "";
-  }
-
-  const sortMark = (k: SortKey) => (sort.key === k ? (sort.desc ? " ▾" : " ▴") : "");
-
-  const menus = $derived<MenuGroup[]>([
-    {
-      id: "file",
-      name: "ファイル",
-      accessKey: "F",
-      items: [
-        {
-          id: "add_book",
-          label: "本を追加",
-          shortcut: "Ctrl+N",
-          action: () => (dialog = { mode: "add" }),
-        },
-        {
-          id: "import_csv",
-          label: "Notion CSV 取り込み…",
-          shortcut: "Ctrl+I",
-          action: importCsv,
-        },
-        { id: "sep_file_1", label: "", type: "separator" },
-        {
-          id: "open_db",
-          label: "データベースを開く…",
-          shortcut: "Ctrl+O",
-          action: openDb,
-        },
-        {
-          id: "move_db",
-          label: "保存先を移動…",
-          action: moveDb,
-        },
-      ],
-    },
-    {
-      id: "edit",
-      name: "編集",
-      accessKey: "E",
-      items: [
-        {
-          id: "search_metadata",
-          label: "書誌情報を検索…",
-          shortcut: "u",
-          disabled: !selected,
-          action: () => selected && (dialog = { mode: "update", book: selected }),
-        },
-        {
-          id: "fetch_from_link",
-          label: "リンク先から書誌情報を取得",
-          disabled: !selected || !selected.link_url,
-          action: async () => {
-            if (selected && selected.link_url) {
-              await detail?.fetchFromLink();
-            }
-          },
-        },
-        {
-          id: "change_cover",
-          label: "表紙画像を変更…",
-          disabled: !selected,
-          action: () => selected && (coverDialogBook = selected),
-        },
-        {
-          id: "open_link",
-          label: "リンクを開く",
-          shortcut: "o / Enter",
-          disabled: !selected || !selected.link_url,
-          action: openLink,
-        },
-        { id: "sep_edit_1", label: "", type: "separator" },
-        {
-          id: "delete_book",
-          label: "本を削除",
-          shortcut: "Delete",
-          disabled: !selected,
-          action: removeSelected,
-        },
-      ],
-    },
-    {
-      id: "view",
-      name: "表示",
-      accessKey: "V",
-      items: [
-        {
-          id: "sort_completed",
-          label: "並び替え: 読了日",
-          checked: sort.key === "completed_at",
-          action: () => setSort("completed_at"),
-        },
-        {
-          id: "sort_title",
-          label: "並び替え: タイトル",
-          checked: sort.key === "title",
-          action: () => setSort("title"),
-        },
-        {
-          id: "sort_author",
-          label: "並び替え: 著者",
-          checked: sort.key === "author",
-          action: () => setSort("author"),
-        },
-        {
-          id: "sort_rating",
-          label: "並び替え: 評価",
-          checked: sort.key === "rating",
-          action: () => setSort("rating"),
-        },
-        { id: "sep_view_1", label: "", type: "separator" },
-        {
-          id: "toggle_sort_order",
-          label: sort.desc ? "昇順に切り替え" : "降順に切り替え",
-          shortcut: "r",
-          action: () => (sort = { ...sort, desc: !sort.desc }),
-        },
-        { id: "sep_view_2", label: "", type: "separator" },
-        {
-          id: "clear_filter",
-          label: "すべての絞り込みを解除",
-          disabled: filter.kind === "all" && !query,
-          action: () => {
-            filter = { kind: "all" };
-            query = "";
-          },
-        },
-      ],
-    },
-  ]);
+  const menus = $derived(
+    buildMenus(
+      { hasSelection: !!selected, hasLink: !!selected?.link_url, sort, filtered: filter.kind !== "all" || !!query },
+      {
+        addBook: () => run({ type: "addBook" }),
+        importCsv,
+        openDb,
+        moveDb,
+        lookup: openLookup,
+        fetchFromLink: () => selected?.link_url && detail?.fetchFromLink(),
+        changeCover: () => selected && (coverDialogBook = selected),
+        openLink,
+        deleteBook: removeSelected,
+        setSort,
+        reverseSort: () => run({ type: "reverseSort" }),
+        clearFilter,
+      },
+    ),
+  );
 </script>
 
 <svelte:window {onkeydown} />
@@ -511,63 +303,20 @@
   </div>
 
   <main class="panes">
-    <section class="pane side" class:active={focus === "side"}>
-      <div class="pane-title"> 絞り込み </div>
-      <div class="pane-body">
-        {#each side as item}
-          {#if item.heading}
-            <div class="side-head">{item.label}</div>
-          {:else}
-            <button class="side-item" class:cur={sameFilter(item.filter, filter)} class:focused={focus === "side"} onclick={() => { setFilter(item.filter); focus = "side"; }}>
-              <span class:stars={item.filter.kind === "rating" && item.filter.value > 0}>{item.label}</span>
-              <span class="count">{item.count}</span>
-            </button>
-          {/if}
-        {/each}
-      </div>
-    </section>
+    <Sidebar items={side} {filter} active={focus === "side"} onpick={(f) => { setFilter(f); focus = "side"; }} />
 
-    <section class="pane list" class:active={focus === "list"}>
-      <div class="pane-title"> 本 ({filtered.length} 冊){query ? ` [検索: ${query}]` : ""} </div>
-      <div class="table-head">
-        <button onclick={() => setSort("rating")}>評価{sortMark("rating")}</button>
-        <button onclick={() => setSort("title")}>タイトル{sortMark("title")}</button>
-        <button onclick={() => setSort("author")}>著者{sortMark("author")}</button>
-        <button onclick={() => setSort("media_type")}>種別{sortMark("media_type")}</button>
-        <button onclick={() => setSort("status")}>状態{sortMark("status")}</button>
-        <button onclick={() => setSort("completed_at")}>読了日{sortMark("completed_at")}</button>
-      </div>
-      <div class="pane-body" bind:this={listEl}>
-        {#if filtered.length === 0}
-          <div class="empty muted">
-            {#if books.length === 0}
-              本がまだありません。Ctrl+N で追加するか、Ctrl+I で Notion の CSV を取り込んでください。
-            {:else}
-              該当する本がありません。
-            {/if}
-          </div>
-        {/if}
-        {#each filtered as b, i (b.id)}
-          <!-- svelte-ignore a11y_click_events_have_key_events -->
-          <div
-            class="row"
-            class:cur={i === cursor}
-            class:focused={focus === "list"}
-            role="row"
-            tabindex="-1"
-            onclick={() => { selectedId = b.id; focus = "list"; }}
-            ondblclick={openLink}
-          >
-            <span class="stars"><span>{stars(b.rating).slice(0, b.rating)}</span><span class="off">{stars(b.rating).slice(b.rating)}</span></span>
-            <span class="title">{b.title}{#if b.notes}<span class="note-mark" title="感想あり"> ✎</span>{/if}</span>
-            <span class="author">{b.author ?? ""}</span>
-            <span class="media">{b.media_type}</span>
-            <span class="status" class:reading={b.status === "読書中"} class:todo={b.status !== "読了" && b.status !== "読書中"}>{b.status}</span>
-            <span class="date">{shortDate(b.completed_at)}</span>
-          </div>
-        {/each}
-      </div>
-    </section>
+    <BookList
+      bind:this={list}
+      books={filtered}
+      total={books.length}
+      {cursor}
+      active={focus === "list"}
+      {sort}
+      {query}
+      onselect={(id) => { selectedId = id; focus = "list"; }}
+      onopen={openLink}
+      onsort={setSort}
+    />
 
     <section class="pane detail" class:active={focus === "detail"}>
       <div class="pane-title"> 詳細 </div>
@@ -579,7 +328,7 @@
             {coverSrc}
             {mediaTypes}
             onsave={saveBook}
-            onlookup={() => selected && (dialog = { mode: "update", book: selected })}
+            onlookup={openLookup}
             onopen={(u) => openUrl(u)}
             onfocus={() => (focus = "detail")}
             onchangecover={() => (coverDialogBook = selected)}
@@ -591,13 +340,7 @@
     </section>
   </main>
 
-  <footer class="statusbar">
-    <span>{filtered.length ? `${cursor + 1}/${filtered.length}` : "0/0"}</span>
-    <span>全 {books.length} 冊 / 読了 {readCount} 冊</span>
-    <span>平均 ★{avgRating}</span>
-    <span class="msg">{message}</span>
-    <span class="path" title={info?.db_path}>{info?.db_path ?? ""}</span>
-  </footer>
+  <StatusBar position={cursor} shown={filtered.length} total={books.length} {stats} {message} dbPath={info?.db_path ?? ""} />
 </div>
 
 {#if dialog}
@@ -612,12 +355,7 @@
 {/if}
 
 {#if coverDialogBook}
-  <CoverDialog
-    book={coverDialogBook}
-    {coverSrc}
-    onclose={() => (coverDialogBook = null)}
-    onupdated={onCoverUpdated}
-  />
+  <CoverDialog book={coverDialogBook} {coverSrc} onclose={() => (coverDialogBook = null)} onupdated={onCoverUpdated} />
 {/if}
 
 <style>
@@ -628,17 +366,6 @@
     padding: 2px;
     gap: 3px;
     box-sizing: border-box;
-  }
-  .statusbar {
-    display: flex;
-    align-items: center;
-    gap: 2ch;
-    height: var(--row);
-    padding: 1px 1ch;
-    background: var(--ui-status-bg);
-    color: var(--ui-status-fg);
-    white-space: nowrap;
-    overflow: hidden;
   }
   .searchbar {
     display: flex;
@@ -660,133 +387,7 @@
     grid-template-columns: minmax(12ch, 13.5%) 1fr minmax(44ch, 30%);
     gap: 3px;
   }
-
-  /* Sidebar */
-  .side-head {
-    margin-top: 5px;
-    padding: 0 0.5ch 0 1ch;
-    color: var(--ui-accent);
-    font-weight: bold;
-    font-size: 11px;
-  }
-  .side-item {
-    display: flex;
-    width: 100%;
-    justify-content: space-between;
-    align-items: center;
-    border: none;
-    padding: 0 0.5ch 0 1ch;
-    height: var(--row);
-    text-align: left;
-    font-size: 11px;
-  }
-  .side-item:hover:not(:disabled) {
-    border: none;
-    color: inherit;
-    background: var(--ui-surface-2);
-  }
-  .side-item.cur {
-    background: var(--ui-inactive-cursor-bg);
-  }
-  .side-item.cur.focused {
-    background: var(--ui-cursor-bg);
-    color: var(--ui-cursor-fg);
-    font-weight: bold;
-  }
-  .side-item.cur.focused .stars {
-    color: inherit;
-  }
-  .count {
-    color: var(--ui-muted);
-  }
-  .side-item.cur.focused .count {
-    color: inherit;
-  }
-
-  /* Book table */
-  .list {
-    --cols: 11ch 1fr 18ch 15ch 7ch 11ch;
-  }
-  .table-head,
-  .row {
-    display: grid;
-    grid-template-columns: var(--cols);
-    gap: 1.5ch;
-    padding: 0 1ch;
-    align-items: center;
-  }
-  .table-head {
-    margin: 0 1px;
-    border-bottom: 1px solid var(--ui-border);
-  }
-  .table-head button {
-    border: none;
-    padding: 0;
-    text-align: left;
-    color: var(--ui-accent);
-  }
-  .row {
-    height: 20px;
-    cursor: default;
-  }
-  .row > span {
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
-  .row:hover {
-    background: var(--ui-surface-2);
-  }
-  .row.cur {
-    background: var(--ui-inactive-cursor-bg);
-  }
-  .row.cur.focused {
-    background: var(--ui-cursor-bg);
-    color: var(--ui-cursor-fg);
-  }
-  .row.cur.focused .title {
-    font-weight: bold;
-  }
-  .row.cur.focused > span,
-  .row.cur.focused .stars .off,
-  .row.cur.focused .note-mark {
-    color: var(--ui-cursor-fg);
-  }
-  .stars .off {
-    color: var(--ui-border);
-  }
-  .author,
-  .date {
-    color: var(--ui-muted);
-  }
-  .media {
-    color: var(--ui-accent);
-  }
-  .status.reading {
-    color: var(--ui-green);
-  }
-  .status.todo {
-    color: var(--ui-purple);
-  }
-  .note-mark {
-    color: var(--ui-muted-2);
-  }
   .empty {
     padding: 1em 2ch;
-  }
-
-  /* Status bar */
-  .msg {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    color: var(--ui-star);
-  }
-  .path {
-    max-width: 40%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    direction: rtl;
-    color: var(--ui-muted);
   }
 </style>

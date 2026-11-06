@@ -14,7 +14,7 @@ use serde_json::Value;
 use std::sync::LazyLock;
 
 /// Largest cover image accepted by [`download`].
-const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
+pub const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
 /// Largest HTML page read by [`fetch_from_link`].
 const MAX_HTML_BYTES: usize = 5 * 1024 * 1024;
 

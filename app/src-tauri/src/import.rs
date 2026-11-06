@@ -182,4 +182,29 @@ mod tests {
         assert_eq!(a.media_type, "オーディブル");
         assert_eq!(a.link_url.as_deref(), Some("https://example.com/a"));
     }
+
+    #[test]
+    fn isbn_is_taken_from_amazon_links_only_when_it_is_one() {
+        assert_eq!(extract_isbn_from_url("https://www.amazon.co.jp/dp/4121022726/ref=x").as_deref(), Some("4121022726"));
+        assert_eq!(extract_isbn_from_url("https://www.amazon.co.jp/gp/product/412102272x").as_deref(), Some("412102272X"));
+        assert_eq!(extract_isbn_from_url("https://www.amazon.co.jp/dp/B09771DDFL"), None, "Kindle ASIN is not an ISBN");
+        assert_eq!(extract_isbn_from_url("https://example.com/book"), None);
+    }
+
+    #[test]
+    fn missing_isbns_are_backfilled_from_links() {
+        let conn = Connection::open_in_memory().unwrap();
+        db::migrate(&conn).unwrap();
+        let save = |title: &str, link: Option<&str>, isbn: Option<&str>| {
+            db::save(&conn, &Book { title: title.into(), link_url: link.map(Into::into), isbn: isbn.map(Into::into), ..Default::default() })
+                .unwrap()
+        };
+        let a = save("a", Some("https://www.amazon.co.jp/dp/4121022726"), None);
+        let b = save("b", Some("https://www.amazon.co.jp/dp/4000000000"), Some("9780000000000"));
+        let c = save("c", Some("https://example.com/"), None);
+        assert_eq!(backfill_isbns(&conn).unwrap(), 1);
+        assert_eq!(db::get(&conn, a.id.unwrap()).unwrap().unwrap().isbn.as_deref(), Some("4121022726"));
+        assert_eq!(db::get(&conn, b.id.unwrap()).unwrap().unwrap().isbn.as_deref(), Some("9780000000000"), "existing ISBN kept");
+        assert_eq!(db::get(&conn, c.id.unwrap()).unwrap().unwrap().isbn, None);
+    }
 }

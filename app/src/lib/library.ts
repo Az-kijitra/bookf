@@ -1,4 +1,4 @@
-import type { Book, Candidate } from "./types";
+import { emptyBook, type Book, type Candidate, type LookupResult } from "./types";
 
 export type Filter =
   | { kind: "all" }
@@ -150,8 +150,62 @@ export function applyCandidate(book: Book, c: Candidate): Book {
   };
 }
 
-export function today(): string {
-  const d = new Date();
+export function today(d: Date = new Date()): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** Clicking the current sort column flips the direction; a new column starts newest / best first for dates and ratings. */
+export function nextSort(sort: Sort, key: SortKey): Sort {
+  return sort.key === key ? { key, desc: !sort.desc } : { key, desc: key === "completed_at" || key === "rating" };
+}
+
+/** `s` key: the next column in SORT_LABELS order. */
+export function cycleSort(sort: Sort): Sort {
+  const keys = Object.keys(SORT_LABELS) as SortKey[];
+  return nextSort(sort, keys[(keys.indexOf(sort.key) + 1) % keys.length]);
+}
+
+/** `i` clamped to a list of `len` items (0 for an empty list). */
+export function clampIndex(i: number, len: number): number {
+  return Math.max(0, Math.min(len - 1, i));
+}
+
+/** The sidebar filter `delta` selectable rows away from `current` (headings are skipped). */
+export function stepFilter(items: SideItem[], current: Filter, delta: number): Filter {
+  const selectable = items.filter((s) => !s.heading);
+  if (selectable.length === 0) return current;
+  const at = Math.max(0, selectable.findIndex((s) => sameFilter(s.filter, current)));
+  return selectable[clampIndex(at + delta, selectable.length)].filter;
+}
+
+export interface LibraryStats {
+  read: number;
+  /** Average of the rated books, one decimal, or "-" when none is rated. */
+  avgRating: string;
+}
+
+export function libraryStats(books: Book[]): LibraryStats {
+  const rated = books.filter((b) => b.rating > 0);
+  return {
+    read: books.filter((b) => b.status === "読了").length,
+    avgRating: rated.length ? (rated.reduce((s, b) => s + b.rating, 0) / rated.length).toFixed(1) : "-",
+  };
+}
+
+/** The new book for a lookup dialog result; 読了 / 読書中 get today's date. */
+export function bookFromLookup(r: LookupResult, day: string): Book {
+  const b: Book = { ...emptyBook(), title: r.title, status: r.status, media_type: r.media_type };
+  if (r.status === "読了") b.completed_at = day;
+  if (r.status === "読書中") b.started_at = day;
+  return r.candidate ? applyCandidate(b, r.candidate) : b;
+}
+
+/** Initial search words when looking up an existing book: the ISBN, else the title (which may be a URL). */
+export function suggestQuery(b: Book): string {
+  return b.isbn || b.title.trim();
+}
+
+export function shortDate(d: string | null): string {
+  return d ? d.replaceAll("-", "/") : "";
 }
