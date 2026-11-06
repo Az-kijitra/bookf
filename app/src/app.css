@@ -1,0 +1,178 @@
+/*
+ * bookf look: the `nord` preset of guif / tuif (guif app/src-tauri/src/appearance/presets.rs and vars.rs).
+ * Monospace font, 12px text, 16px rows, 1px frames with the heading embedded in the top line, square corners.
+ * Components only reference var(--ui-*), so other presets can be added later by swapping these values.
+ */
+:root {
+  --ui-bg: #2e3440;
+  --ui-fg: #eceff4;
+  --ui-surface: #2e3440;
+  --ui-surface-2: #3b4252;
+  --ui-border: #4c566a;
+  --ui-border-active: #88c0d0;
+  --ui-muted: #b3b7be;
+  --ui-muted-2: #8a909b;
+  --ui-cursor-fg: #2e3440;
+  --ui-cursor-bg: #8fbcbb;
+  --ui-inactive-cursor-bg: #434c5e;
+  --ui-accent: #81a1c1;
+  --ui-green: #a3be8c;
+  --ui-purple: #b48ead;
+  --ui-star: #ebcb8b;
+  --ui-status-fg: #e5e9f0;
+  --ui-status-bg: #3b4252;
+  --ui-menu-active-fg: #2e3440;
+  --ui-menu-active-bg: #88c0d0;
+  --ui-error: #ff8a80;
+  --ui-backdrop: rgba(0, 0, 0, 0.35);
+  --ui-shadow: rgba(0, 0, 0, 0.4);
+
+  --ui-font: "JetBrains Mono", "JetBrainsMono NFM", "JetBrainsMono NF", "Cascadia Mono", "Consolas", "BIZ UDGothic", "Meiryo", monospace;
+  --ui-font-size: 12px;
+  --row: 16px;
+  color-scheme: dark;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--ui-bg);
+  color: var(--ui-fg);
+  font-family: var(--ui-font);
+  font-size: var(--ui-font-size);
+  line-height: var(--row);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+input,
+select,
+textarea {
+  box-sizing: border-box;
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  border-radius: 0;
+  padding: 1px 4px;
+  outline: none;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--ui-border-active);
+}
+
+select option {
+  background: var(--ui-bg);
+}
+
+button {
+  background: transparent;
+  border: 1px solid var(--ui-border);
+  border-radius: 0;
+  padding: 0 1ch;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--ui-border-active);
+  color: var(--ui-border-active);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--ui-menu-active-bg);
+  border-color: var(--ui-menu-active-bg);
+  color: var(--ui-menu-active-fg);
+}
+
+button.primary:hover:not(:disabled) {
+  color: var(--ui-menu-active-fg);
+  filter: brightness(1.1);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--ui-border);
+}
+
+/* Frame with the heading embedded in the top line (guif .pane / tuif Block). */
+.pane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 0;
+  padding-top: var(--row);
+  background: var(--ui-surface);
+}
+
+.pane::before {
+  content: "";
+  position: absolute;
+  top: calc(var(--row) / 2);
+  right: 0;
+  bottom: 0;
+  left: 0;
+  border: 1px solid var(--ui-border);
+  pointer-events: none;
+}
+
+.pane.active::before {
+  border-color: var(--ui-border-active);
+}
+
+.pane-title {
+  position: absolute;
+  top: 0;
+  left: 1ch;
+  z-index: 1;
+  max-width: calc(100% - 2ch);
+  height: var(--row);
+  padding: 0 1ch;
+  overflow: hidden;
+  background: var(--ui-surface);
+  white-space: pre;
+}
+
+.pane.active .pane-title {
+  color: var(--ui-border-active);
+}
+
+.pane-body {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  margin: 0 1px 1px;
+  overflow: auto;
+}
+
+.muted {
+  color: var(--ui-muted);
+}
+
+.stars {
+  color: var(--ui-star);
+  letter-spacing: 0;
+  white-space: pre;
+}
